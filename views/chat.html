@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chat Room</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <script src="https://cdn.socket.io/4.0.1/socket.io.min.js"></script>
+    <style>
+        body {
+            background-color: #064e3b;
+            color: white;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+        }
+        .chat-container {
+            background-color: #047857;
+            width: 500px;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
+        }
+        .messages {
+            height: 300px;
+            overflow-y: auto;
+            background: white;
+            color: black;
+            padding: 10px;
+            border-radius: 5px;
+            margin-bottom: 10px;
+        }
+        .btn-send, 
+        #sendPrivateMessage, 
+        #logout, 
+        #leaveRoom {
+            display: block; 
+            width: 100%; 
+            background-color: #34d399 !important; 
+            border-color: #34d399 !important;
+            color: white !important;
+            padding: 10px;
+            text-align: center;
+            border-radius: 5px;
+            text-decoration: none; 
+        }
+        .btn-send:hover, 
+        #sendPrivateMessage:hover, 
+        #logout:hover, 
+        #leaveRoom:hover {
+            background-color: #059669 !important;
+            border-color: #059669 !important;
+        }
+        .logout {
+            color: #6ee7b7;
+            text-decoration: none;
+        }
+        .logout:hover {
+            color: #34d399;
+        }
+        #typingIndicator {
+            font-style: italic;
+            color: #d1fae5;
+            text-align: center;
+            margin-top: 5px;
+            display: none;
+            visibility: visible; 
+        }
+        .private-message {
+            color: red;
+            font-weight: bold;
+        }
+        #privateUser {
+            appearance: none;
+            -webkit-appearance: none;
+            -moz-appearance: none;
+            background: white url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="black"><path d="M7 10l5 5 5-5z"/></svg>') no-repeat right 10px center;
+            background-size: 16px;
+            padding-right: 30px; 
+            cursor: pointer;
+        }
+
+    </style>
+</head>
+<body>
+    <div class="chat-container">
+        <h2 id="roomTitle" class="text-center">Chat Room</h2>
+        <h3 id="activeUsers" class="text-center text-white mt-2">Active Users: Loading...</h3>
+        
+        <div class="mb-3">
+            <label>Select a user for private message:</label>
+            <select id="privateUser" class="form-control">
+                <option value="">Select User</option>
+            </select>
+        </div>
+
+        <div class="messages" id="messages"></div>
+        <p id="typingIndicator" class="text-center text-white mt-2"></p>
+
+        <input type="text" id="messageInput" class="form-control" placeholder="Type a message...">
+        <button class="btn btn-send w-100 mt-2" id="sendMessage">Send to Room</button>
+        <button class="btn btn-primary w-100 mt-2" id="sendPrivateMessage">Send Private Message</button>
+
+        <p class="text-center mt-3">
+            <a href="login.html" class="logout" id="logout">Logout</a>
+        </p>
+        <p class="text-center mt-3">
+            <button id="leaveRoom" class="btn btn-warning w-100">Leave Room</button>
+        </p>
+    </div>
+
+    <script>
+        // Establish socket.io connection
+        const socket = io("http://localhost:5500");
+
+        console.log("Checking LocalStorage data...");
+        console.log("User stored in localStorage:", localStorage.getItem("user"));
+        console.log("Room stored in localStorage:", localStorage.getItem("room"));
+
+        // Fetch user details from localStorage
+        const user = JSON.parse(localStorage.getItem("user"));
+        if (!user) {
+            console.log("No user found in localStorage. Redirecting to login page...");
+            window.location.href = "login.html";
+        }
+
+        const room = localStorage.getItem("room") || "general"; 
+        document.getElementById("roomTitle").textContent = `Room: ${room}`;
+
+        // Register user and join the room
+        socket.emit("registerUser", { username: user.username });
+        socket.emit("joinRoom", { username: user.username, room });
+
+        // Load past messages from MongoDB when joining a room
+        socket.on("loadMessages", (messages) => {
+            const messagesDiv = document.getElementById("messages");
+            messagesDiv.innerHTML = ""; 
+
+            messages.forEach(msg => {
+                messagesDiv.innerHTML += `<p><strong>${msg.from_user}:</strong> ${msg.message} <span style="font-size: 12px; color: gray;">(${new Date(msg.date_sent).toLocaleTimeString()})</span></p>`;
+            });
+
+            messagesDiv.scrollTop = messagesDiv.scrollHeight; 
+        });
+
+        // Display new messages in chat
+        socket.on("message", (data) => {
+            const messagesDiv = document.getElementById("messages");
+            messagesDiv.innerHTML += `<p><strong>${data.from_user}:</strong> ${data.message} <span style="font-size: 12px; color: gray;">(${data.date_sent})</span></p>`;
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        });
+
+        // Update list of active users
+        socket.on("roomUsers", ({ room, users }) => {
+            const activeUsersDiv = document.getElementById("activeUsers");
+            activeUsersDiv.innerHTML = `<strong>Active Users:</strong> ${users.map(user => user.username).join(", ") || "No one else is here"}`;
+            
+            const privateUserSelect = document.getElementById("privateUser");
+            privateUserSelect.innerHTML = `<option value="">Select User</option>`;
+            users.forEach(userObj => {
+                if (userObj.username !== user.username) {
+                    privateUserSelect.innerHTML += `<option value="${userObj.username}">${userObj.username}</option>`;
+                }
+            });
+        });
+
+        // Send message to room
+        document.getElementById("sendMessage").addEventListener("click", () => {
+            const messageInput = document.getElementById("messageInput");
+            if (messageInput.value.trim() !== "") {
+                socket.emit("chatMessage", { username: user.username, room, message: messageInput.value });
+                messageInput.value = "";
+            }
+        });
+
+        // Send private message
+        document.getElementById("sendPrivateMessage").addEventListener("click", () => {
+            const messageInput = document.getElementById("messageInput");
+            const recipient = document.getElementById("privateUser").value;
+
+            if (recipient && messageInput.value.trim() !== "") {
+                socket.emit("privateMessage", { sender: user.username, recipient, message: messageInput.value });
+                messagesDiv.innerHTML += `<p class="private-message">[Private to ${recipient}]: ${messageInput.value}</p>`;
+                messageInput.value = "";
+            }
+        });
+
+        socket.on("privateMessage", ({ sender, message }) => {
+            const messagesDiv = document.getElementById("messages");
+            messagesDiv.innerHTML += `<p class="private-message">[Private from ${sender}]: ${message}</p>`;
+        });
+
+        // Typing Indicator Feature
+        let typingTimer;
+        const messageInput = document.getElementById("messageInput");
+
+        messageInput.addEventListener("input", () => {
+            socket.emit("typing", { username: user.username, room });
+
+            clearTimeout(typingTimer);
+            typingTimer = setTimeout(() => {
+                socket.emit("stopTyping", { username: user.username, room });
+            }, 2000);
+        });
+
+        socket.on("displayTyping", (username) => {
+            if (username !== user.username) {
+                document.getElementById("typingIndicator").textContent = `${username} is typing...`;
+                document.getElementById("typingIndicator").style.display = "block";
+            }
+        });
+
+        socket.on("hideTyping", () => {
+            document.getElementById("typingIndicator").style.display = "none";
+        });
+    </script>
+</body>
+</html>
